@@ -3,7 +3,7 @@ import base64
 import json
 import sys
 import time
-from urllib.error import HTTPError, URLError
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 BASE = 'http://127.0.0.1:18765'
@@ -30,7 +30,7 @@ def main():
         try:
             assert call('/healthz', auth=False)[0] == 200
             break
-        except (URLError, AssertionError):
+        except (OSError, AssertionError):
             if time.monotonic() > deadline:
                 raise
             time.sleep(1)
