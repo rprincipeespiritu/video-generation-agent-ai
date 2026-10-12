@@ -4,6 +4,8 @@ let token = '', jobs = [], filter = 'all', selected = null, config = {}, activit
 let toastTimer, librarySnapshot = '';
 const labels = {REVIEW:'Por revisar', APPROVED:'Aprobado', UPLOADED:'Publicado', ERROR:'Necesita atención', RESEARCHING:'Investigando', GENERATING:'Generando', RESEARCHED:'Listo para generar', REJECTED:'Descartado', UPLOADING:'Envío en curso', UNKNOWN:'Revisar archivos'};
 const colors = {REVIEW:'orange', APPROVED:'green', UPLOADED:'blue', ERROR:'red', RESEARCHING:'blue', GENERATING:'blue', RESEARCHED:'neutral', REJECTED:'neutral', UPLOADING:'orange', UNKNOWN:'red'};
+Object.assign(labels, {TOPIC_RESEARCHING:'Investigando temas', TOPICS_REVIEW:'Temas por aprobar', TOPIC_APPROVED:'Tema aprobado'});
+Object.assign(colors, {TOPIC_RESEARCHING:'blue', TOPICS_REVIEW:'orange', TOPIC_APPROVED:'green'});
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const badge = status => `<span class="badge ${colors[status] || 'neutral'}">${esc(labels[status] || status)}</span>`;
 const duration = seconds => { const total = Math.round(seconds || 0); return total ? `${Math.floor(total / 60)}:${String(total % 60).padStart(2,'0')}` : '—'; };
@@ -36,6 +38,18 @@ async function refresh() {
   finally { loading = false; }
 }
 function renderStatus() {
+  $('#environment-label').textContent=config.cloud?'Nube':'Local';
+  $('#space-label').textContent=config.cloud?'Estudio privado':'Espacio local';
+  $('#space-detail').textContent=config.cloud?'Acceso protegido':'Solo en este equipo';
+  $('.schedule-foot').textContent=config.cloud?'Investigación gestionada en el servidor':'Horario gestionado desde Codex';
+  $('#config-form').hidden=!!config.cloud;
+  if(config.cloud){
+    $('#key-help').textContent='Configura OPENAI_API_KEY en las variables de Railway. La clave nunca se muestra en el panel.';
+    $('#youtube-help').textContent='Autoriza tu canal desde el panel local y guarda su token en YOUTUBE_TOKEN_JSON, en Railway Variables. Consulta RAILWAY.md.';
+    $('#connect-youtube').textContent='Verificar mi canal';
+    $('#youtube-next').textContent='El ID del canal aparecerá en los detalles de la operación. Esta verificación no sube videos.';
+    $('#schedule-help').textContent='6:00 a. m. · Perú. Activa DAILY_RESEARCH_ENABLED en Railway para investigar y proponer temas. Cada video requiere tu aprobación del tema y del resultado.';
+  }
   $('#setup-banner').hidden=!!config.openai_configured;
   $('.setup-banner strong').textContent='Conecta OpenAI para crear videos con voz';
   $('.setup-banner p').textContent='Mientras tanto, puedes explorar el estudio con una demo local.';
@@ -63,17 +77,18 @@ function changeFilter(value) { filter=value; $$('.filter').forEach(b=>b.classLis
 
 async function create(mode) {
   await api('/api/create',{mode,topic:$('#topic').value});
-  toast(mode==='demo'?'Preparando tu demo local.':'Generación iniciada. Te mostraremos el progreso.');
+  toast(mode==='daily'?'Investigando propuestas. Elegirás el tema antes de generar un video.':mode==='demo'?'Preparando tu demo local.':'Generación de tu tema iniciada. Te mostraremos el progreso.');
   await refresh();
 }
 async function openJob(id) {
   const item=await api('/api/jobs/'+encodeURIComponent(id));
   selected=item;selected.activity_id=activity?.id;selected.activity_status=activity?.status; editing=false;
   $('#detail-title').textContent=item.title;
+  if(item.kind==='topic_proposals') return openTopics(item);
   const editable=!['UPLOADING','UPLOADED','RESEARCHING','GENERATING','UNKNOWN'].includes(item.status)&&!item.locked;
   const canApprove=!item.demo&&item.ready&&item.render_current&&['REVIEW','APPROVED'].includes(item.status)&&!item.locked;
   const report=item.report;
-  $('#detail-content').innerHTML=`<div class="detail-grid"><div>${item.video?`<video id="player" class="player" controls preload="metadata" poster="${esc(item.poster||'')}" src="${esc(item.video)}?v=${encodeURIComponent(item.updated_at||item.review_hash)}"></video>`:'<div class="no-video">El video estará disponible al terminar la generación.</div>'}${item.demo?'<p class="small muted">Demo local con audio silencioso. No se puede publicar.</p>':''}<div class="tabs" role="group" aria-label="Contenido del trabajo"><button class="tab active" data-tab="script">Guion</button><button class="tab" data-tab="sources">Fuentes (${item.sources.length})</button><button class="tab" data-tab="research">Investigación</button>${editable&&item.script.scenes?'<button class="tab" data-tab="edit">Editar guion</button>':''}</div><div id="tab-content"></div></div><aside class="detail-aside">${badge(item.status)}<dl class="facts"><dt>Duración</dt><dd>${duration(item.duration)}</dd><dt>Escenas</dt><dd>${item.script.scenes?.length||0}</dd><dt>Fuentes</dt><dd>${item.sources.length}</dd></dl>${item.error?`<div class="error-panel">Fallo en ${esc(item.error.phase)} (${esc(item.error.type)}). ${esc(item.error.message||'Revisa los datos y vuelve a intentarlo.')}</div>`:''}${report?.status==='MEASURED'?'<div class="error-panel">La duración necesita un ajuste del guion.</div>':''}${item.ready&&!item.render_current?'<div class="error-panel">El contenido cambió desde el montaje. Regenera antes de aprobar.</div>':''}${canApprove?'<button class="primary" id="approve-button">Revisar aprobación</button>':''}${item.status==='APPROVED'&&!item.demo?'<button class="primary" id="publish-button">Subir a YouTube</button>':''}${editable&&!item.demo?'<button class="outline" id="preview-button">Probar voz e imagen · una escena</button>':''}${item.preview?`<details><summary>Ver última muestra</summary><p class="small">Voz: ${esc(item.preview_report?.voice||'')}. La muestra no cambia el video completo.</p><video class="player" controls preload="metadata" src="${esc(item.preview)}?v=${encodeURIComponent(JSON.stringify(item.preview_report))}"></video></details>`:''}${editable?'<button class="outline" id="regenerate-button">Regenerar con este guion</button><p class="small">Usa la voz y el estilo de Configuración. Reutiliza recursos sin cambios; los nuevos consumen API.</p>':''}${item.status==='ERROR'||item.status==='RESEARCHING'?'<button class="outline" id="retry-button">Reintentar trabajo</button>':''}${editable?'<button class="text-button danger-text" id="reject-button">Descartar video</button>':''}${item.youtube_id?`<a class="text-button" href="https://www.youtube.com/watch?v=${encodeURIComponent(item.youtube_id)}" target="_blank" rel="noopener noreferrer">Ver en YouTube ↗</a>`:''}<p id="detail-error" class="inline-error" role="alert"></p><hr><p class="small">La aprobación y la subida son pasos separados. Tú decides qué se publica.</p><div class="detail-id">${esc(item.id)}</div></aside></div>`;
+  $('#detail-content').innerHTML=`<div class="detail-grid"><div>${item.video?`<video id="player" class="player" controls preload="metadata" poster="${esc(item.poster||'')}" src="${esc(item.video)}?v=${encodeURIComponent(item.updated_at||item.review_hash)}"></video>`:'<div class="no-video">El video estará disponible al terminar la generación.</div>'}${item.demo?'<p class="small muted">Demo local con audio silencioso. No se puede publicar.</p>':''}<div class="tabs" role="group" aria-label="Contenido del trabajo"><button class="tab active" data-tab="script">Guion</button><button class="tab" data-tab="sources">Fuentes (${item.sources.length})</button><button class="tab" data-tab="research">Investigación</button>${editable&&item.script.scenes?'<button class="tab" data-tab="edit">Editar guion</button>':''}</div><div id="tab-content"></div></div><aside class="detail-aside">${badge(item.status)}<dl class="facts"><dt>Duración</dt><dd>${duration(item.duration)}</dd><dt>Escenas</dt><dd>${item.script.scenes?.length||0}</dd><dt>Fuentes</dt><dd>${item.sources.length}</dd></dl>${item.error?`<div class="error-panel">Fallo en ${esc(item.error.phase)} (${esc(item.error.type)}). ${esc(item.error.message||'Revisa los datos y vuelve a intentarlo.')}</div>`:''}${report?.status==='MEASURED'?'<div class="error-panel">La duración necesita un ajuste del guion.</div>':''}${item.ready&&!item.render_current?'<div class="error-panel">El contenido cambió desde el montaje. Regenera antes de aprobar.</div>':''}${canApprove?'<button class="primary" id="approve-button">Revisar aprobación</button>':''}${item.status==='APPROVED'&&!item.demo?'<button class="primary" id="publish-button">Subir a YouTube</button>':''}${editable&&!item.demo&&item.script.scenes?'<button class="outline" id="preview-button">Probar voz e imagen · una escena</button>':''}${item.preview?`<details><summary>Ver última muestra</summary><p class="small">Voz: ${esc(item.preview_report?.voice||'')}. La muestra no cambia el video completo.</p><video class="player" controls preload="metadata" src="${esc(item.preview)}?v=${encodeURIComponent(JSON.stringify(item.preview_report))}"></video></details>`:''}${editable?'<button class="outline" id="regenerate-button">Regenerar con este guion</button><p class="small">Usa la voz y el estilo de Configuración. Reutiliza recursos sin cambios; los nuevos consumen API.</p>':''}${item.status==='ERROR'||item.status==='RESEARCHING'?'<button class="outline" id="retry-button">Reintentar trabajo</button>':''}${editable?'<button class="text-button danger-text" id="reject-button">Descartar video</button>':''}${item.youtube_id?`<a class="text-button" href="https://www.youtube.com/watch?v=${encodeURIComponent(item.youtube_id)}" target="_blank" rel="noopener noreferrer">Ver en YouTube ↗</a>`:''}<p id="detail-error" class="inline-error" role="alert"></p><hr><p class="small">La aprobación y la subida son pasos separados. Tú decides qué se publica.</p><div class="detail-id">${esc(item.id)}</div></aside></div>`;
   $$('.tab').forEach(tab=>tab.addEventListener('click',()=>renderTab(tab.dataset.tab)));
   $('#approve-button')?.addEventListener('click',openApproval);
   $('#publish-button')?.addEventListener('click',openPublish);
@@ -84,6 +99,27 @@ async function openJob(id) {
   renderTab('script');
   if(!$('#detail-dialog').open) $('#detail-dialog').showModal();
 }
+function openTopics(item) {
+  const canChoose=item.status==='TOPICS_REVIEW'&&!item.demo&&!item.locked&&!busy();
+  $('#detail-content').innerHTML=`${badge(item.status)}<p>Revisa los temas y sus fuentes. Al pulsar <strong>Aprobar tema y generar video</strong> iniciarás un video de diez minutos con consumo de API. Cuando esté listo, tendrás que revisarlo y aprobarlo antes de subirlo a YouTube.</p>
+    ${item.demo?'<p class="error-panel">Simulación local: estos temas son ficticios y no se pueden aprobar para generar videos.</p>':''}
+    ${item.error?`<p class="error-panel">Fallo en ${esc(item.error.phase)}. ${esc(item.error.message||'La investigación se conservó para revisión.')}</p>`:''}
+    ${(item.topics||[]).map((t,i)=>{const child=item.selections?.[String(i+1)];return `<article class="scene topic-proposal"><span class="eyebrow">${esc(t.category)} · ${esc(t.event_date)}</span><h3>${i+1}. ${esc(t.title)}</h3><p>${esc(t.summary)}</p><p><strong>Por qué vale la pena:</strong> ${esc(t.reason)}</p><ul class="sources-list">${t.sources.map(url=>`<li><a href="${esc(safeURL(url))}" target="_blank" rel="noopener noreferrer">${esc(item.sources.find(s=>s.url===url)?.title||url)} ↗</a></li>`).join('')}</ul>${child?`<button class="outline" data-selected-job="${esc(child)}">Tema aprobado · abrir trabajo</button>`:`<button class="primary" data-topic-number="${i+1}" ${canChoose?'':'disabled'}>Aprobar tema y generar video</button>`}</article>`;}).join('')||'<p class="muted">Las propuestas aparecerán cuando termine la investigación.</p>'}
+    ${['ERROR','TOPIC_RESEARCHING'].includes(item.status)&&!item.locked&&!busy()&&!item.demo?'<button class="outline" id="retry-topics">Reintentar investigación de temas</button>':''}
+    <details><summary>Ver investigación completa</summary><pre class="research-text" id="topics-research"></pre></details><p id="detail-error" class="inline-error" role="alert"></p><div class="detail-id">${esc(item.id)}</div>`;
+  $('#topics-research').textContent=item.research||'Todavía no hay investigación guardada.';
+  $$('[data-topic-number]').forEach(button=>button.addEventListener('click',()=>perform(async()=>{
+    button.disabled=true;
+    try {
+      const result=await api(`/api/jobs/${item.id}/select-topic`,{number:Number(button.dataset.topicNumber),confirmed:true,topics_hash:item.topics_hash});
+      await refresh();await openJob(result.job_id);toast('Tema aprobado. El video quedará pendiente de una nueva revisión.');
+    } catch(error) {button.disabled=false;throw error;}
+  })));
+  $$('[data-selected-job]').forEach(button=>button.addEventListener('click',()=>perform(()=>openJob(button.dataset.selectedJob))));
+  $('#retry-topics')?.addEventListener('click',()=>perform(()=>jobAction('retry')));
+  if(!$('#detail-dialog').open) $('#detail-dialog').showModal();
+}
+
 function renderTab(tab) {
   editing=tab==='edit'; $$('.tab').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab));
   const j=selected, container=$('#tab-content');
@@ -116,8 +152,8 @@ $('#toggle-log').addEventListener('click',()=>{$('#activity-log').hidden=!$('#ac
 $('#approval-form').addEventListener('submit',async event=>{event.preventDefault();const data={reviewed:$('#reviewed').checked,confirmation:$('#approval-confirmation').value,review_hash:selected.review_hash,publication:{channel_id:$('#channel-id').value.trim(),privacy:$('#privacy').value,made_for_kids:$('#kids').value==='yes',synthetic_media:$('#synthetic').value==='yes'}};try{await api(`/api/jobs/${selected.id}/approve`,data);$('#approval-dialog').close();await openJob(selected.id);await refresh();toast('Aprobación guardada. El video todavía no se ha subido.');}catch(e){$('#approval-error').textContent=e.message;}});
 $('#publish-form').addEventListener('submit',async event=>{event.preventDefault();try{await api(`/api/jobs/${selected.id}/publish`,{confirmation:$('#publish-confirmation').value,approved_hash:selected.approved_hash});$('#publish-dialog').close();$('#detail-dialog').close();await refresh();toast('Subida iniciada. Consulta el progreso en el estudio.');}catch(e){$('#publish-error').textContent=e.message;}});
 $('#config-form').addEventListener('submit',async event=>{event.preventDefault();try{await api('/api/config',{openai_key:$('#api-key').value.trim()});$('#api-key').value='';$('#config-error').textContent='Clave guardada. Se verificará al generar tu primer video.';await refresh();}catch(e){$('#config-error').textContent=e.message;}});
-$('#connect-youtube').addEventListener('click',async()=>{try{await api('/api/channel',{});$('#config-dialog').close();await refresh();$('#activity-log').hidden=false;toast('Completa la conexión en la ventana de Google.');}catch(e){$('#config-error').textContent=e.message;}});
+$('#connect-youtube').addEventListener('click',async()=>{try{await api('/api/channel',{});$('#config-dialog').close();await refresh();$('#activity-log').hidden=false;toast(config.cloud?'Verificando el canal autorizado.':'Completa la conexión en la ventana de Google.');}catch(e){$('#config-error').textContent=e.message;}});
 $('#date-label').textContent=new Date().toLocaleDateString('es-PE',{weekday:'long',day:'numeric',month:'long',timeZone:'America/Lima'});
-(async()=>{try{token=(await api('/api/session')).token;await refresh();setInterval(refresh,3500);}catch(e){toast('No se pudo abrir la sesión local. Actualiza la página.',true);}})();
+(async()=>{try{token=(await api('/api/session')).token;await refresh();setInterval(refresh,3500);}catch(e){toast('No se pudo abrir la sesión. Actualiza la página.',true);}})();
 
 $('#production-form').addEventListener('submit',async event=>{event.preventDefault();try{await api('/api/production',{voice:$('#voice').value,visual_mode:$('#visual-mode').value});await refresh();$('#production-message').textContent='Preferencias guardadas. Abre un video y prueba una escena o regenera para aplicarlas.';}catch(e){$('#production-message').textContent=e.message;}});

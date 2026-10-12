@@ -1,0 +1,10 @@
+*
+!requirements.txt
+!agent.py
+!production.py
+!ui.py
+!server.py
+!web/
+!web/**
+!docker-entrypoint.sh
+!Dockerfile

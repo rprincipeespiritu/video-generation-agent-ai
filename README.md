@@ -1,12 +1,12 @@
-# VideoAgenteIA — estudio local
+# VideoAgenteIA — estudio de video
 
-Proyecto Python para investigar actualidad, redactar un guion educativo, crear un MP4 narrado y subirlo a tu canal de YouTube **solo después de tu aprobación explícita**. Incluye un panel web que funciona en tu PC y comandos de terminal.
+Proyecto Python para investigar actualidad, redactar un guion educativo, crear un MP4 narrado y subirlo a tu canal de YouTube **solo después de tu aprobación explícita**. Incluye un panel web que funciona en tu PC y comandos de terminal. Para desplegar el panel privado desde la rama `prd`, sigue [la guía de Railway](RAILWAY.md).
 
 ## Qué hace
 
-1. Busca en la web cinco temas de las últimas 48 horas; propone un ranking editorial por actualidad, impacto y valor educativo. No es una medición objetiva de las noticias más populares.
+1. Investiga y propone de tres a cinco temas de actualidad e historia, con resumen, motivo de interés, fecha y fuentes. La investigación diaria no genera videos.
 2. Conserva investigación, respuesta original de la API y enlaces citados.
-3. Desarrolla el tema recomendado o uno elegido por ti en un guion para 10 minutos, con 12–20 escenas y 1300–1700 palabras narradas.
+3. Espera tu aprobación de un tema propuesto; entonces amplía su investigación y prepara un guion de diez minutos, con 12–20 escenas y 1300–1700 palabras narradas. También puedes generar directamente un tema que escribas tú.
 4. Produce ilustraciones realistas por escena con movimiento suave a 1280 × 720, voz sintética conversacional en español y un MP4 con FFmpeg. Comprueba y ajusta los nuevos videos reales a diez minutos dentro de los límites de ritmo descritos más abajo.
 5. Te permite revisar, editar el guion, regenerar, rechazar o aprobar.
 6. Comprueba aprobación, integridad y canal antes de subir el archivo mediante OAuth.
@@ -53,7 +53,7 @@ Se abre tu navegador en **http://127.0.0.1:8765**. Mantén esa ventana de PowerS
 
 El panel permite:
 
-- Escribir un tema y generar su video de diez minutos, o iniciar la edición de actualidad del día.
+- Escribir tu propio tema para generar su video, o investigar las propuestas de actualidad e historia del día y aprobar las que quieras convertir en videos.
 - Consultar tu biblioteca, buscar videos y filtrar pendientes, aprobados y publicados.
 - Reproducir el MP4, leer las fuentes y la investigación, editar el guion y regenerar.
 - Aprobar con las opciones de canal y visibilidad; subir después con una confirmación separada.
@@ -62,7 +62,7 @@ El panel permite:
 
 La generación funciona en segundo plano y muestra su progreso. El panel inicia una operación a la vez. Puedes cerrar la pestaña y volver a abrirla mientras el servidor siga activo. Para cerrarlo, espera a que termine la operación y pulsa Ctrl+C en PowerShell. Evita cerrar la terminal durante una generación o subida.
 
-El horario de las 6:00 a. m. se administra en **Codex**. El panel muestra el estado que encuentra en la configuración local de esa automatización; «Sin verificar» significa que no pudo encontrarla. Abrir el panel por sí solo no programa el trabajo diario.
+El horario de investigación de las 6:00 a. m. se administra en **Codex**. Solo propone temas; espera tu elección antes de producir un video. El panel muestra el estado que encuentra en la configuración local de esa automatización; «Sin verificar» significa que no pudo encontrarla. Abrir el panel por sí solo no programa el trabajo diario.
 
 ### Prueba rápida del panel sin claves
 
@@ -86,7 +86,7 @@ Se usa Responses API con la herramienta `web_search`, una segunda llamada para e
 
 ### Voz e imágenes
 
-En **Configuración → Voz y estilo visual** elige la voz y **Ilustraciones realistas de IA** o **Láminas de texto**. Guarda las preferencias. Se aplican a los próximos videos, incluidos los diarios, y a las regeneraciones; los MP4 existentes se conservan hasta regenerarlos.
+En **Configuración → Voz y estilo visual** elige la voz y **Ilustraciones realistas de IA** o **Láminas de texto**. Guarda las preferencias. Se aplican a los próximos videos, incluidos los que apruebes desde las propuestas, y a las regeneraciones; los MP4 existentes se conservan hasta regenerarlos.
 
 Para escuchar y ver una muestra, abre un trabajo real y pulsa **Probar voz e imagen · una escena**. Al finalizar, abre **Ver última muestra**. Solo genera la primera escena, a su ritmo original; no reemplaza el video completo ni cambia su aprobación. Para aplicar las preferencias al video completo, pulsa **Regenerar con este guion**; vuelve a quedar pendiente de aprobación.
 
@@ -142,35 +142,47 @@ La validación comprueba estructura, tipos, límites y URLs incluso con Python o
 
 Al terminar, FFmpeg decodifica el MP4 para comprobar audio y video y mide su duración. Si la narración está entre 8 y 12,5 minutos, distribuye los fotogramas a 600 segundos y ajusta el audio original con Rubber Band, con tolerancia técnica de 0,15 segundos. Fuera de ese intervalo el trabajo queda en `ERROR`: se debe ampliar o acortar el guion. El archivo definitivo se reemplaza después de pasar la comprobación. `render_report.json` guarda duración original, objetivo, resultado, voz, estilo visual y factor de ritmo. Los trabajos antiguos sin `target_seconds` conservan la duración natural de su narración.
 
-## Generación diaria a las 6:00 a. m.
+## Propuestas diarias a las 6:00 a. m.
 
-El comando para una ejecución diaria es:
+La automatización **Propuestas diarias de actualidad e historia** investiga a las 6:00 a. m. de Perú y guarda de tres a cinco temas para elegir. Busca actualidad de las últimas 48 horas y sucesos históricos importantes, priorizando relevancia para Perú. Para cada tema muestra resumen, fecha, motivo de interés y al menos dos enlaces del catálogo investigado. No selecciona un tema ni crea guion, voz, imágenes o MP4 automáticamente.
 
 ```powershell
 .\.venv\Scripts\python.exe agent.py diario
 ```
 
-Investiga noticias de las últimas 48 horas sobre **ciencia, tecnología y actualidad relevante para Perú**, elige un tema, desarrolla evidencia para diez minutos y deja el video en `REVIEW`. Usa los últimos siete títulos terminados para pedir variedad; esto no garantiza que nunca se repita un tema.
+Cada fecha de Perú usa `data/propuestas-AAAA-MM-DD`. Al terminar queda en `TOPICS_REVIEW`, con `topics.json`, `research.md` y `sources.json`. Una segunda ejecución no repite la investigación, incluso si falló. Los videos diarios antiguos permanecen en sus carpetas originales y no se regeneran por la programación.
 
-Cada fecha de Perú tiene una carpeta `data/diario-AAAA-MM-DD`. Si se ejecuta dos veces, la segunda no repite llamadas ni crea otro video. Un fallo tampoco provoca un segundo intento automático el mismo día: usa los comandos de recuperación por ID. Si falta la clave, no se reserva la fecha. El horario corresponde al inicio del proceso; el video estará listo cuando termine la generación.
+En el panel:
 
-La programación se administra en la automatización de este chat en Codex: **todos los días a las 6:00 a. m., America/Lima**. Requiere el equipo encendido, sin suspensión, la app abierta, acceso a esta carpeta e internet. Configura `OPENAI_API_KEY` en `.env` para investigación, guion y voz. Las llamadas consumen API. La automatización genera y avisa cuando hay un video nuevo para revisar; nunca ejecuta `aprobar` ni `publicar`. Puedes pausarla desde las tareas programadas de la app.
+1. Pulsa **Investigar temas de hoy** o espera la investigación programada.
+2. Abre el filtro **Temas propuestos** y revisa el resumen y las fuentes.
+3. Pulsa **Aprobar tema y generar video** en el tema elegido. Este paso consume API de investigación ampliada, guion, voz e imágenes.
+4. Se crea un trabajo separado, enlazado con tu elección. Cuando termine, revisa el video completo y apruébalo.
+5. Solo después de aprobar el video puedes pulsar **Subir a YouTube** y confirmar el envío.
 
-Para comprobar el flujo diario sin claves ni consumo:
+Puedes elegir varios temas de un lote. Cada tema admite un único trabajo; un doble clic o una segunda petición no inicia otro video. Si falla el trabajo elegido, se recupera por su ID. Una lista de propuestas cambiada desde que la abriste exige revisión antes de aprobar. Aprobar un tema nunca concede aprobación para publicar.
+
+Equivalente en PowerShell, para el tema número 2 de un lote:
+
+```powershell
+.\.venv\Scripts\python.exe agent.py elegir-tema propuestas-AAAA-MM-DD 2 --confirmar
+```
+
+La investigación fallida de propuestas se reintenta explícitamente y no genera video:
+
+```powershell
+.\.venv\Scripts\python.exe agent.py proponer --reanudar propuestas-AAAA-MM-DD
+```
+
+Para probar las propuestas sin claves ni llamadas a APIs:
 
 ```powershell
 .\.venv\Scripts\python.exe agent.py diario --simular
-.\.venv\Scripts\python.exe agent.py diario --simular
-.\.venv\Scripts\python.exe agent.py listar --pendientes
 ```
 
-La simulación crea una demo corta en `demo-diario-AAAA-MM-DD`, separada del trabajo real; la segunda llamada indica que ya existe. Para probar específicamente diez minutos:
+La simulación usa `demo-propuestas-AAAA-MM-DD`, muestra temas ficticios y bloquea su aprobación. No crea MP4. Para comprobar un montaje de diez minutos sin API, usa `agent.py demo --minutos 10`.
 
-```powershell
-.\.venv\Scripts\python.exe agent.py demo --minutos 10
-```
-
-Después de una generación real, revisa `revisar ID`, `research.md`, `sources.json` y el MP4 completo. Usa `aprobar` y luego `publicar` como se explica a continuación. La aprobación nunca se infiere de la programación diaria.
+La programación requiere el equipo encendido, la app abierta, acceso al proyecto e internet. La investigación consume API y necesita `OPENAI_API_KEY`. Mantiene el horario de las 6:00 a. m. en America/Lima. Sus notificaciones muestran propuestas nuevas, fallos nuevos o acciones necesarias; nunca aprueba temas o videos ni sube contenido por su cuenta.
 
 ## Conectar tu canal de YouTube
 
@@ -201,7 +213,11 @@ YouTube puede restringir a **privado** los videos subidos desde proyectos API no
 
 ## Estados y protección de publicación
 
-`RESEARCHING → RESEARCHED → GENERATING → REVIEW → APPROVED → UPLOADING → UPLOADED`
+`TOPIC_RESEARCHING → TOPICS_REVIEW` para propuestas. Tras elegir un tema se crea otro trabajo:
+
+`TOPIC_APPROVED → RESEARCHING → RESEARCHED → GENERATING → REVIEW → APPROVED → UPLOADING → UPLOADED`
+
+Los temas escritos directamente por ti empiezan en `RESEARCHING` al pulsar Generar mi tema.
 
 También existen `REJECTED` y `ERROR`. Cada trabajo tiene una carpeta y `state.json`, escrito de forma atómica. El hash SHA-256 aprobado cubre el MP4, guion, fuentes y opciones de publicación. Modificar cualquiera bloquea la subida hasta una nueva aprobación. Además, se registra un hash al montar: editar el guion, las fuentes o el MP4 exige regenerar antes de aprobar. Los trabajos de versiones anteriores sin `render_hash` también requieren regeneración. Cancelar una nueva aprobación deja el trabajo en `REVIEW` sin aprobación vigente.
 
@@ -254,11 +270,11 @@ Pruebas locales sin claves ni publicaciones:
 
 ## Alcance comprobado de la entrega
 
-La comprobación local incluye 78 pruebas de validación, corrección de longitud, aprobación, bloqueo por cambios, recuperación, publicación simulada, producción audiovisual y HTTP del panel; seis validaciones adicionales con Python optimizado; y una demo generada, editada y regenerada desde el navegador. Las pruebas de producción incluyen montaje real con FFmpeg, conservación del MP4 anterior ante fallos, reutilización de recursos y WAV con cabecera provisional de streaming.
+La comprobación local incluye pruebas de validación, corrección de longitud, aprobación, bloqueo por cambios, recuperación, publicación simulada, producción audiovisual y HTTP del panel; seis validaciones adicionales con Python optimizado; y una demo generada, editada y regenerada desde el navegador. Las pruebas de producción incluyen montaje real con FFmpeg, conservación del MP4 anterior ante fallos, reutilización de recursos y WAV con cabecera provisional de streaming.
 
-Se completaron videos reales de seres mitológicos y de la Guerra del Guano y Salitre, ambos de 600 segundos, en el formato anterior de láminas. El primero fue rechazado. Para el segundo se verificó una nueva muestra real de 48,71 segundos, con Cedar, audio WAV a velocidad original e ilustración de GPT Image 2 con movimiento, sin aviso hablado ni rótulo de producción con IA. Su guion actualizado tiene 1309 palabras y el estado es `RESEARCHED`: requiere regenerar el video completo y revisarlo antes de aprobar. El MP4 anterior se conserva; la muestra no lo reemplaza. Los originales del guion, estado y muestra se guardaron en `content_edit_backups/20261011-remove-notices/` dentro del trabajo. Las 78 pruebas se comprobaron; una conexión HTTP interrumpida por Windows pasó al repetir las 16 pruebas del panel. La comprobación visual del panel mediante el navegador integrado quedó pendiente por un tiempo de espera; sus rutas HTTP y JavaScript se validaron localmente. La conexión OAuth y la subida real a YouTube siguen pendientes; no se ha conectado ni publicado nada en tu canal.
+Se completaron videos reales de seres mitológicos y de la Guerra del Guano y Salitre, ambos de 600 segundos, en el formato anterior de láminas. El primero fue rechazado. Para el segundo se verificó una nueva muestra real de 48,71 segundos, con Cedar, audio WAV a velocidad original e ilustración de GPT Image 2 con movimiento, sin aviso hablado ni rótulo de producción con IA. Su guion actualizado tiene 1309 palabras y el estado es `RESEARCHED`: requiere regenerar el video completo y revisarlo antes de aprobar. El MP4 anterior se conserva; la muestra no lo reemplaza. Los originales del guion, estado y muestra se guardaron en `content_edit_backups/20261011-remove-notices/` dentro del trabajo. Las 78 pruebas se comprobaron; una conexión HTTP interrumpida por Windows pasó al repetir las 16 pruebas del panel. El 12 de octubre se verificó en el navegador el panel de propuestas y la separación entre aprobar tema y aprobar video. Pasaron 88 pruebas locales; después del ajuste de límites JSON se repitieron y pasaron las ocho pruebas de propuestas. La investigación real quedó en TOPICS_REVIEW sin crear voz, imágenes ni MP4. La conexión OAuth y la subida real a YouTube siguen pendientes; no se ha conectado ni publicado nada en tu canal.
 
-El flujo puede iniciarse por tema o por el comando diario, conservando siempre la aprobación humana. Extensiones posibles: cola de trabajos, base de datos, subtítulos sincronizados y recursos visuales originales.
+Los videos se inician al aprobar una propuesta o al generar un tema escrito por ti. El comando diario solo investiga propuestas y conserva las dos decisiones humanas: tema y video. Extensiones posibles: cola de trabajos, base de datos, subtítulos sincronizados y recursos visuales originales.
 
 ## Documentación técnica consultada
 

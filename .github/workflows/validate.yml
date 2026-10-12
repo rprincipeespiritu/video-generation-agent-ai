@@ -1,0 +1,36 @@
+name: Validar aplicación y contenedor
+on:
+  push:
+    branches: [dev, prd]
+  pull_request:
+    branches: [dev, prd]
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python -X utf8 -m unittest discover -s tests -v -b
+      - run: docker build -t video-agente:ci .
+      - name: Iniciar con volumen y sin claves de proveedores
+        run: >-
+          docker run -d --name video-smoke -p 127.0.0.1:18765:8080
+          -v video-smoke:/storage
+          -e PUBLIC_URL=https://studio.example.test
+          -e ADMIN_PASSWORD=ci-only-password-1234567890
+          -e DAILY_RESEARCH_ENABLED=false video-agente:ci
+      - run: python tests/container_smoke.py
+      - run: docker restart video-smoke
+      - run: python tests/container_smoke.py --check-persisted
+      - name: Diagnóstico y cierre
+        if: always()
+        run: |
+          docker logs video-smoke 2>/dev/null || true
+          docker rm -f video-smoke 2>/dev/null || true

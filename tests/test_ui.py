@@ -231,6 +231,42 @@ class PanelTests(unittest.TestCase):
         self.assertEqual(len(body['jobs']), 2)
         self.assertEqual(self.request('/api/jobs/broken')[0], 400)
 
+    def proposal_job(self):
+        from test_topics import topics
+        self.state(status='TOPICS_REVIEW', kind='topic_proposals')
+        agent.save(self.folder / 'topics.json', topics())
+        (self.folder / 'research.md').write_text('Investigación para elegir un tema.', encoding='utf-8')
+
+    def test_proposals_require_confirmation_and_create_only_one_selected_job(self):
+        self.proposal_job()
+        detail = self.request('/api/jobs/video-test')[1]
+        self.assertEqual(len(detail['topics']), 3)
+        payload = {'number': 1, 'confirmed': True, 'topics_hash': detail['topics_hash']}
+        with patch.object(self.server.activity, 'start', return_value={'status': 'RUNNING'}) as start:
+            self.assertEqual(self.action('select-topic', {**payload, 'confirmed': False})[0], 400)
+            self.assertEqual(self.action('select-topic', {**payload, 'topics_hash': 'old'})[0], 400)
+            start.assert_not_called()
+            code, result, _ = self.action('select-topic', payload)
+            self.assertEqual(code, 200)
+            self.assertEqual(result['job_id'], 'video-test-tema-1')
+            self.assertEqual(start.call_args.args[1], [['continuar-tema', 'video-test-tema-1']])
+            self.assertEqual(self.action('select-topic', payload)[0], 400)
+            start.assert_called_once()
+        state = agent.load(agent.DATA / result['job_id'] / 'state.json')
+        self.assertEqual(state['status'], 'TOPIC_APPROVED')
+        self.assertNotIn('approved_hash', state)
+
+    def test_proposal_actions_cannot_generate_or_publish_and_retry_only_researches(self):
+        self.proposal_job()
+        with patch.object(self.server.activity, 'start', return_value={'status': 'RUNNING'}) as start:
+            for action in ('regenerate', 'preview', 'approve', 'publish', 'save-script'):
+                with self.subTest(action=action):
+                    self.assertEqual(self.action(action, {})[0], 400)
+            start.assert_not_called()
+            self.state(status='ERROR', last_error={'phase': 'TOPIC_RESEARCHING'})
+            self.assertEqual(self.action('retry', {})[0], 200)
+            self.assertEqual(start.call_args.args[1], [['proponer', '--reanudar', 'video-test']])
+
 
 if __name__ == '__main__':
     unittest.main()

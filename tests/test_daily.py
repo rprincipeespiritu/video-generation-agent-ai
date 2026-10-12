@@ -120,41 +120,40 @@ class LongVideoTests(JobTestCase):
 class DailyTests(JobTestCase):
     def test_daily_runs_once_and_never_publishes(self):
         with tempfile.TemporaryDirectory() as root, patch.object(agent, 'DATA', Path(root)):
-            def produce(**kwargs):
-                folder = kwargs['folder']
-                agent.save(folder / 'state.json', {'status': 'REVIEW', 'demo': False})
+            def produce(folder, **kwargs):
+                agent.save(folder / 'state.json', {'status': 'TOPICS_REVIEW', 'demo': False})
                 return folder
-            with patch.object(agent, 'client'), patch.object(agent, 'create_video', side_effect=produce) as create:
+            with patch.object(agent, 'client'), patch.object(agent, 'propose_topics', side_effect=produce) as create:
                 with patch.object(agent, 'publish', side_effect=AssertionError('No publicar')):
                     first = agent.daily()
                     second = agent.daily()
             self.assertEqual(first, second)
             create.assert_called_once()
-            self.assertEqual(agent.load(first / 'state.json')['status'], 'REVIEW')
+            self.assertEqual(agent.load(first / 'state.json')['status'], 'TOPICS_REVIEW')
 
     def test_missing_key_does_not_reserve_day(self):
         with tempfile.TemporaryDirectory() as root, patch.object(agent, 'DATA', Path(root)):
             with patch.object(agent, 'client', side_effect=ValueError('Falta clave')), self.assertRaises(ValueError):
                 agent.daily()
-            self.assertEqual(list(Path(root).glob('diario-*')), [])
+            self.assertEqual(list(Path(root).glob('propuestas-*')), [])
 
     def test_simulation_does_not_consume_real_day(self):
         with tempfile.TemporaryDirectory() as root, patch.object(agent, 'DATA', Path(root)):
-            def fake_demo(**kwargs):
-                agent.save(kwargs['folder'] / 'state.json', {'status': 'REVIEW', 'demo': True})
-                return kwargs['folder']
             with patch.object(agent, 'client', side_effect=AssertionError('Sin API')):
-                with patch.object(agent, 'demo', side_effect=fake_demo):
+                with patch.object(agent, 'generate', side_effect=AssertionError('Sin video')):
                     folder = agent.daily(simulate=True)
-            self.assertTrue(folder.name.startswith('demo-diario-'))
-            self.assertEqual(list(Path(root).glob('diario-*')), [])
+            self.assertTrue(folder.name.startswith('demo-propuestas-'))
+            self.assertEqual(agent.load(folder / 'state.json')['status'], 'TOPICS_REVIEW')
+            self.assertTrue((folder / 'topics.json').is_file())
+            self.assertFalse((folder / 'video.mp4').exists())
+            self.assertEqual(list(Path(root).glob('propuestas-*')), [])
 
     def test_failed_day_is_not_automatically_recharged(self):
         with tempfile.TemporaryDirectory() as root, patch.object(agent, 'DATA', Path(root)):
-            def fail(**kwargs):
-                agent.save(kwargs['folder'] / 'state.json', {'status': 'ERROR', 'demo': False})
+            def fail(folder, **kwargs):
+                agent.save(folder / 'state.json', {'status': 'ERROR', 'demo': False})
                 raise RuntimeError('fallo')
-            with patch.object(agent, 'client'), patch.object(agent, 'create_video', side_effect=fail) as create:
+            with patch.object(agent, 'client'), patch.object(agent, 'propose_topics', side_effect=fail) as create:
                 with self.assertRaises(RuntimeError):
                     agent.daily()
                 folder = agent.daily()
@@ -165,10 +164,10 @@ class DailyTests(JobTestCase):
         with tempfile.TemporaryDirectory() as root, patch.object(agent, 'DATA', Path(root)):
             with patch.object(agent, 'datetime') as clock:
                 clock.now.return_value = real_datetime.fromisoformat('2026-10-10T23:30:00-05:00')
-                with patch.object(agent, 'client'), patch.object(agent, 'create_video') as create:
+                with patch.object(agent, 'client'), patch.object(agent, 'propose_topics') as create:
                     agent.daily()
                 self.assertEqual(str(clock.now.call_args.args[0]), 'America/Lima')
-                self.assertEqual(create.call_args.kwargs['folder'].name, 'diario-2026-10-10')
+                self.assertEqual(create.call_args.args[0].name, 'propuestas-2026-10-10')
 
     def test_create_finishes_at_review_without_approval(self):
         def generated(folder, **kwargs):
