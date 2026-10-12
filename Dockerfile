@@ -6,7 +6,8 @@ ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PYTHONUTF8=1 \
 
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg fonts-dejavu-core tini gosu \
     && rm -rf /var/lib/apt/lists/* \
-    && useradd --uid 10001 --create-home video
+    && groupadd --gid 10001 videoagent \
+    && useradd --uid 10001 --gid 10001 --create-home videoagent
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
