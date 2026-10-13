@@ -331,7 +331,13 @@ class Actions:
             elif action == 'preview':
                 if state.get('demo') or not (folder / 'script.json').is_file():
                     raise ValueError('La muestra requiere un guion real.')
+                script = agent.load(job_file(folder, 'script.json'))
+                agent.validate_script(script, agent.load(job_file(folder, 'sources.json')))
+                scene_number = data.get('scene', 1)
+                agent.production.validate_scene_number(script, scene_number)
                 commands = [['muestra', folder.name]]
+                if scene_number != 1:
+                    commands[0].extend(['--escena', str(scene_number)])
             else:
                 if state['status'] == 'TOPIC_APPROVED':
                     commands = [['continuar-tema', folder.name]]

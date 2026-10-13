@@ -150,6 +150,12 @@ def error_details(error):
     return details
 
 
+def print_error_details(details):
+    for field in ('context', 'message', 'diagnostic', 'recovery'):
+        if details.get(field):
+            print(details[field], file=sys.stderr)
+
+
 @contextmanager
 def operation(folder, phase, success):
     """Persistir fallos sin guardar mensajes de proveedores que puedan contener secretos."""
@@ -166,9 +172,7 @@ def operation(folder, phase, success):
         })
         save(folder / 'state.json', state)
         print(f'Trabajo {folder.name}: ERROR en {phase} ({type(e).__name__}).', file=sys.stderr)
-        for field in ('context', 'message', 'diagnostic', 'recovery'):
-            if state['last_error'].get(field):
-                print(state['last_error'][field], file=sys.stderr)
+        print_error_details(state['last_error'])
         raise
     else:
         state.update(status=success, updated_at=now())
@@ -367,6 +371,8 @@ def validate_script(script, sources):
         for bullet in bullets:
             validate_text(bullet, f'Escena {i}, punto', 120)
         validate_text(scene.get('narration'), f'Escena {i}, narration', 1800)
+        if 'visual_description' in scene:
+            validate_text(scene['visual_description'], f'Escena {i}, descripción de imagen', 1200, allow_empty=True)
         refs = scene.get('sources')
         if not isinstance(refs, list) or not refs or any(not isinstance(u, str) or u not in allowed for u in refs):
             raise ValueError(f'Escena {i}: sources debe ser una lista de URLs del catálogo de investigación.')
@@ -682,17 +688,23 @@ def render(folder, demo=False):
         raise local_error from error
 
 
-def preview(folder):
+def preview(folder, scene_number=1):
     script = load(folder / 'script.json')
     validate_script(script, load(folder / 'sources.json'))
+    production.validate_scene_number(script, scene_number)
     fingerprint = digest(folder, ('script.json', 'sources.json'))
     api = client()
-    production.render(folder, script, production.settings(), api, ffmpeg_executable(),
-                      run, inspect_video, draw_slide, preview=True)
+    try:
+        production.render(folder, script, production.settings(), api, ffmpeg_executable(),
+                          run, inspect_video, draw_slide, preview=True, preview_scene=scene_number)
+    except (Exception, KeyboardInterrupt) as error:
+        # La muestra no cambia el estado ni la aprobación del video completo.
+        print_error_details(error_details(error))
+        raise
     if fingerprint != digest(folder, ('script.json', 'sources.json')):
         (folder / 'preview.mp4').unlink(missing_ok=True)
         raise ScriptError('El guion cambió durante la muestra. Genera otra con el guion actualizado.')
-    print(f'Muestra de la primera escena: {folder / "preview.mp4"}. No cambia el video ni su aprobación.')
+    print(f'Muestra de la escena {scene_number}: {folder / "preview.mp4"}. No cambia el video ni su aprobación.')
 
 
 def render_demo(folder):
@@ -1119,6 +1131,8 @@ def main(argv=None):
             s.add_argument('--usar-guion', action='store_true')
             s.add_argument('--corregir-guion', action='store_true',
                            help='Permitir hasta dos correcciones de longitud del guion guardado antes de generar voz')
+        if command == 'muestra':
+            s.add_argument('--escena', type=int, default=1, help='Número de escena de la muestra, desde 1')
         if command == 'aprobar':
             s.add_argument('--canal', required=True, help='ID UC… del canal')
             s.add_argument('--privacidad', choices=['private', 'unlisted', 'public'], default='private')
@@ -1180,7 +1194,7 @@ def main(argv=None):
         if args.cmd == 'muestra':
             if state.get('demo') or state['status'] in ('RESEARCHING', 'GENERATING'):
                 raise ValueError('La muestra requiere un guion real con la generación detenida.')
-            preview(folder)
+            preview(folder, args.escena)
         elif args.cmd == 'generar':
             generate(folder, args.tema, args.usar_guion, args.corregir_guion)
         elif args.cmd == 'rechazar':

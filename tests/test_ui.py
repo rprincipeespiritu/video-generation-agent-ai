@@ -155,6 +155,25 @@ class PanelTests(unittest.TestCase):
             prompt.assert_not_called()
             start.assert_not_called()
 
+    def test_selected_scene_preview_and_visual_edit_require_new_approval(self):
+        self.action('approve', self.approval())
+        item = script()
+        item['scenes'][1]['visual_description'] = 'Río y bosque amazónico al atardecer.'
+        with patch.object(self.server.activity, 'start', return_value={'status': 'RUNNING'}) as start:
+            self.assertEqual(self.action('save-script', {'script': item, 'script_hash': ui.script_hash(self.folder)})[0], 200)
+            start.assert_not_called()  # Guardar una imagen distinta no consume API.
+            self.assertNotIn('approved_hash', self.state())
+            self.assertNotIn('render_hash', self.state())
+            self.assertEqual(self.action('approve', self.approval())[0], 400)
+            saved = self.request('/api/jobs/video-test')[1]['script']
+            self.assertEqual(saved['scenes'][1], item['scenes'][1])
+            self.assertEqual(self.action('preview', {'scene': 2})[0], 200)
+            self.assertEqual(start.call_args.args[1], [['muestra', 'video-test', '--escena', '2']])
+            for number in (True, 0, 4, -1, '2', [], None):
+                start.reset_mock()
+                self.assertEqual(self.action('preview', {'scene': number})[0], 400)
+                start.assert_not_called()
+
     def test_demo_and_stale_review_cannot_be_approved(self):
         data = self.approval()
         self.state(demo=True)

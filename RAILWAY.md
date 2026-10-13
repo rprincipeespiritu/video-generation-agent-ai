@@ -69,6 +69,16 @@ Cuando hayas revisado la causa, pulsa **Reintentar trabajo** sobre el mismo ID. 
 
 Referencias: [errores de generación de imágenes](https://developers.openai.com/api/docs/guides/image-generation#handling-blocked-requests-and-other-errors), [códigos de error de OpenAI](https://developers.openai.com/api/docs/guides/error-codes), [alertas de gasto](https://developers.openai.com/api/docs/guides/terraform/rate-limits-and-spend).
 
+Para elegir una ilustración diferente tras un rechazo de contenido:
+
+1. Pulsa **Editar imagen de escena N** o abre **Editar guion** y busca esa escena.
+2. Completa **Imagen de esta escena (opcional)** con una representación apropiada: por ejemplo, el entorno, objetos o un paisaje relacionado, en lugar de una agresión descrita en una leyenda. Esta descripción visual define una nueva imagen y no cambia la narración. Los controles de moderación siguen activos.
+3. Guarda el guion. Guardar no consume API y anula cualquier aprobación anterior.
+4. En **Escena de la muestra**, selecciona la escena editada y pulsa **Probar voz e imagen**. Solo esa escena se solicita; sus recursos completos sin cambios se reutilizan. La muestra conserva el video completo y su estado.
+5. Revisa la muestra. Cuando estés conforme, pulsa **Regenerar con este guion** para completar el video; después vuelve a revisarlo y aprobarlo antes de subirlo.
+
+Deja vacía la descripción de las escenas que quieras mantener. Los guiones antiguos siguen funcionando y conservan sus claves de caché. Editar solo la descripción visual de una escena no solicita de nuevo su audio ni las imágenes de las otras escenas. Los recursos pendientes o modificados sí consumen API. Un rechazo detiene también la muestra; no se reintenta ni se reformula el contenido automáticamente.
+
 ## 4. Investigación diaria: trasladar el horario
 
 El programador interno consulta la hora de **America/Lima** y, a partir de las **06:00**, ejecuta exclusivamente `agent.py diario` una vez por fecha. Si a esa hora está ocupado, espera a que termine. Si el servicio arranca más tarde, investiga el día actual; no recupera días anteriores.

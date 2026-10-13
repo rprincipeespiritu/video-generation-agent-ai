@@ -78,6 +78,34 @@ class ProductionTests(JobTestCase):
         self.assertEqual(self.api.audio.speech.with_streaming_response.create.call_count, 2)
         production.wav_data(first)
 
+    def test_visual_edit_changes_only_selected_image_and_reuses_audio(self):
+        item = script()
+        scene = item['scenes'][1]
+        narration = scene['narration']
+        audio, _ = production.speech_asset(self.folder, scene, self.opts, self.api)
+        first_image = production.image_asset(self.folder, item, item['scenes'][0], self.opts, self.api)
+        original_image = production.image_asset(self.folder, item, scene, self.opts, self.api)
+        original_prompt = production.image_prompt(item, scene)
+        scene['visual_description'] = ' '  # Un campo vacío conserva la petición anterior.
+        self.assertEqual(production.image_prompt(item, scene), original_prompt)
+        scene['visual_description'] = 'Río amazónico y bosque al atardecer, sin personas.'
+        changed_image = production.image_asset(self.folder, item, scene, self.opts, self.api)
+        reused_audio, _ = production.speech_asset(self.folder, scene, self.opts, self.api)
+        reused_image = production.image_asset(self.folder, item, item['scenes'][0], self.opts, self.api)
+        self.assertEqual(scene['narration'], narration)
+        self.assertEqual(audio, reused_audio)
+        self.assertEqual(first_image, reused_image)
+        self.assertNotEqual(original_image, changed_image)
+        self.assertTrue(original_image.is_file())
+        self.api.audio.speech.with_streaming_response.create.assert_called_once()
+        images = self.api.with_options.return_value.images.generate
+        self.assertEqual(images.call_count, 3)
+        request = images.call_args.kwargs
+        self.assertIn(scene['visual_description'], request['prompt'])
+        self.assertNotIn(narration, request['prompt'])
+        self.assertNotIn(item['title'], request['prompt'])
+        self.assertNotIn('moderation', request)  # Se conserva la moderación predeterminada.
+
     def test_exact_frame_budget_without_drifting_per_scene(self):
         counts, ratio = production.scene_frames([45.7] * 14, 600)
         self.assertEqual(sum(counts), 600 * production.FPS)
@@ -174,10 +202,17 @@ class ProductionTests(JobTestCase):
     def test_real_ffmpeg_preview_and_exact_duration_assembly_without_apis(self):
         before_video = (self.folder / 'video.mp4').read_bytes()
         before_state = self.state()
-        report = production.render(self.folder, script(), self.opts, self.api, agent.ffmpeg_executable(),
-                                   agent.run, agent.inspect_video, agent.draw_slide, preview=True)
+        item = script()
+        item['scenes'][1]['narration'] = 'Narración exclusiva de la segunda escena.'
+        report = production.render(self.folder, item, self.opts, self.api, agent.ffmpeg_executable(),
+                                   agent.run, agent.inspect_video, agent.draw_slide, preview=True, preview_scene=2)
         self.assertEqual(report['audio_processing'], 'original')
         self.assertEqual(report['voice'], 'cedar')
+        self.assertEqual(report['scene'], 2)
+        speech = self.api.audio.speech.with_streaming_response.create
+        speech.assert_called_once()
+        self.assertEqual(speech.call_args.kwargs['input'], item['scenes'][1]['narration'])
+        self.api.with_options.return_value.images.generate.assert_called_once()
         self.assertTrue((self.folder / 'preview.mp4').is_file())
         self.assertEqual((self.folder / 'video.mp4').read_bytes(), before_video)
         self.assertEqual(self.state(), before_state)
@@ -199,6 +234,34 @@ class ProductionTests(JobTestCase):
         self.mark_approved()
         before = self.state()
         with patch.object(agent, 'client', return_value=self.api), patch.object(production, 'render') as render:
-            agent.preview(self.folder)
+            agent.preview(self.folder, 2)
         self.assertTrue(render.call_args.kwargs['preview'])
+        self.assertEqual(render.call_args.kwargs['preview_scene'], 2)
         self.assertEqual(self.state(), before)
+
+    def test_invalid_preview_scene_never_calls_provider(self):
+        for number in (0, -1, 4, True, '2', 1.5, None):
+            with self.subTest(number=number), patch.object(agent, 'client') as client, self.assertRaises(ValueError):
+                agent.preview(self.folder, number)
+            client.assert_not_called()
+
+    def test_failed_preview_reports_selected_scene_without_changing_full_video_approval(self):
+        import httpx
+        from openai import BadRequestError
+        self.mark_approved()
+        before = self.state()
+        error = BadRequestError('private provider text', response=httpx.Response(
+            400, request=httpx.Request('POST', 'https://api.openai.com/v1/images/generations')),
+            body={'code': 'moderation_blocked'})
+        images = self.api.with_options.return_value.images.generate
+        images.side_effect = error
+        output = io.StringIO()
+        with patch.object(agent, 'client', return_value=self.api), \
+                patch.object(production, 'settings', return_value=self.opts), \
+                redirect_stderr(output), self.assertRaises(BadRequestError):
+            agent.preview(self.folder, 2)
+        self.assertIn('Ilustración · escena 2/3', output.getvalue())
+        self.assertIn('moderation_blocked', output.getvalue())
+        self.assertNotIn('private provider text', output.getvalue())
+        self.assertEqual(self.state(), before)
+        images.assert_called_once()

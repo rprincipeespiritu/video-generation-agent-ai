@@ -88,12 +88,15 @@ Se usa Responses API con la herramienta `web_search`, una segunda llamada para e
 
 En **Configuración → Voz y estilo visual** elige la voz y **Ilustraciones realistas de IA** o **Láminas de texto**. Guarda las preferencias. Se aplican a los próximos videos, incluidos los que apruebes desde las propuestas, y a las regeneraciones; los MP4 existentes se conservan hasta regenerarlos.
 
-Para escuchar y ver una muestra, abre un trabajo real y pulsa **Probar voz e imagen · una escena**. Al finalizar, abre **Ver última muestra**. Solo genera la primera escena, a su ritmo original; no reemplaza el video completo ni cambia su aprobación. Para aplicar las preferencias al video completo, pulsa **Regenerar con este guion**; vuelve a quedar pendiente de aprobación.
+Para escuchar y ver una muestra, abre un trabajo real, elige **Escena de la muestra** y pulsa **Probar voz e imagen**. Al finalizar, abre **Ver última muestra**. Solo genera la escena elegida, a su ritmo original; no reemplaza el video completo ni cambia su aprobación. Para aplicar las preferencias al video completo, pulsa **Regenerar con este guion**; vuelve a quedar pendiente de aprobación.
+
+En **Editar guion → Imagen de esta escena (opcional)** puedes describir una ilustración distinta sin modificar lo narrado. Por ejemplo, puedes acompañar una leyenda con un paisaje de su región. Describe una representación adecuada a las políticas del proveedor; la moderación permanece activa. Guardar no consume API. Al probar o regenerar, se reutilizan la voz y las imágenes que no hayan cambiado. Un campo vacío conserva el comportamiento anterior, que toma como referencia el título, encabezado y narración. El botón **Editar imagen de escena N**, cuando falla una ilustración, lleva directamente a ese campo.
 
 Equivalente en PowerShell:
 
 ```powershell
 .\.venv\Scripts\python.exe agent.py muestra ID
+.\.venv\Scripts\python.exe agent.py muestra ID --escena 6
 .\.venv\Scripts\python.exe agent.py generar ID --usar-guion
 ```
 

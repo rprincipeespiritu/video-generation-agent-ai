@@ -7,6 +7,17 @@ class ValidationTests(unittest.TestCase):
     def test_valid_script(self):
         agent.validate_script(script(), sources())
 
+    def test_optional_visual_description_is_bounded_text(self):
+        for value in ('', ' ', 'Río amazónico y bosque al atardecer.', 'x' * 1200):
+            item = script()
+            item['scenes'][0]['visual_description'] = value
+            agent.validate_script(item, sources())
+        for value in (None, 42, [], {}, 'x' * 1201):
+            item = script()
+            item['scenes'][0]['visual_description'] = value
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                agent.validate_script(item, sources())
+
     def test_invalid_root_and_required_fields(self):
         for value in (None, [], '', {}, {'title': None}, dict(script(), scenes='abc')):
             with self.subTest(value=value), self.assertRaises(ValueError):
