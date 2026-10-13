@@ -40,6 +40,9 @@ def main():
     except HTTPError as error:
         assert error.code == 401
     token = call('/api/session')[1]['token']
+    code, page = call('/', headers={'Sec-Fetch-Site': 'cross-site', 'Sec-Fetch-Mode': 'navigate',
+                                    'Sec-Fetch-Dest': 'document', 'Sec-Fetch-User': '?1'})
+    assert code == 200 and b'VideoAgente' in page, 'El enlace externo debe abrir el estudio autenticado.'
     if '--check-persisted' not in sys.argv:
         assert call('/api/create', {'mode': 'demo'}, token=token)[0] == 200
         deadline = time.monotonic() + 90

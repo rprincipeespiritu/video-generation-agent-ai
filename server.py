@@ -77,8 +77,14 @@ def create_app():
                 and secrets.compare_digest((auth.password or '').encode(), password.encode())):
             return jsonify(error='Introduce el usuario y la contraseña del estudio.'), 401, {
                 'WWW-Authenticate': 'Basic realm="VideoAgente", charset="UTF-8"'}
+        # Abrir el estudio desde un enlace externo es una navegación legítima.
+        # La excepción solo entrega el HTML inicial autenticado, nunca APIs,
+        # archivos, iframes ni solicitudes que puedan modificar un trabajo.
+        homepage_navigation = (request.path == '/' and request.method in ('GET', 'HEAD')
+                               and request.headers.get('Sec-Fetch-Mode') == 'navigate'
+                               and request.headers.get('Sec-Fetch-Dest') == 'document')
         if (request.headers.get('Origin') not in (None, origin)
-                or request.headers.get('Sec-Fetch-Site') == 'cross-site'):
+                or (request.headers.get('Sec-Fetch-Site') == 'cross-site' and not homepage_navigation)):
             return jsonify(error='Origen no permitido.'), 403
         if request.method not in ('GET', 'HEAD', 'OPTIONS'):
             if not secrets.compare_digest(request.headers.get('X-Local-Token', '').encode(), runtime.token.encode()):

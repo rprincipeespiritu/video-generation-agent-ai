@@ -72,6 +72,32 @@ class ProductionTests(unittest.TestCase):
             start.assert_not_called()
         self.assertEqual(self.request('/api/session', headers={'X-Forwarded-Host': 'evil.test'}).status_code, 200)
 
+    def test_external_link_opens_authenticated_homepage(self):
+        navigation = {'Sec-Fetch-Site': 'cross-site', 'Sec-Fetch-Mode': 'navigate',
+                      'Sec-Fetch-Dest': 'document', 'Sec-Fetch-User': '?1'}
+        self.assertEqual(self.request('/', headers=navigation, auth=False).status_code, 401)
+        response = self.request('/', headers=navigation)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.mimetype, 'text/html')
+        self.assertIn("frame-ancestors 'none'", response.headers['Content-Security-Policy'])
+        self.assertEqual(self.request('/api/session', headers={'Sec-Fetch-Site': 'same-origin',
+                         'Sec-Fetch-Mode': 'cors', 'Sec-Fetch-Dest': 'empty'}).status_code, 200)
+
+    def test_navigation_exception_does_not_expose_api_media_or_actions(self):
+        navigation = {'Sec-Fetch-Site': 'cross-site', 'Sec-Fetch-Mode': 'navigate',
+                      'Sec-Fetch-Dest': 'document', 'Sec-Fetch-User': '?1'}
+        for path in ('/api/session', '/api/status', '/api/jobs', '/media/video-test/video', '/app.js'):
+            with self.subTest(path=path):
+                self.assertEqual(self.request(path, headers=navigation).status_code, 403)
+        for changes in ({'Sec-Fetch-Dest': 'iframe'}, {'Sec-Fetch-Mode': 'cors'},
+                        {'Sec-Fetch-Dest': 'empty'}, {'Origin': 'https://evil.test'}, {'Host': 'evil.test'}):
+            with self.subTest(changes=changes):
+                self.assertEqual(self.request('/', headers={**navigation, **changes}).status_code, 403)
+        with patch.object(self.runtime.activity, 'start') as start:
+            self.assertEqual(self.request('/api/create', {'mode': 'demo'}, navigation).status_code, 403)
+            self.assertEqual(self.request('/', {'mode': 'demo'}, navigation).status_code, 403)
+            start.assert_not_called()
+
     def test_config_blocks_secret_changes_and_persists_preferences(self):
         self.assertEqual(self.request('/api/config', {'openai_key': 'not-a-real-key'}).status_code, 400)
         self.assertEqual(self.request('/api/production', {'voice': 'onyx', 'visual_mode': 'slides'}).status_code, 200)
