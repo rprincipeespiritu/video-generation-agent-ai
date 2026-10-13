@@ -3,6 +3,8 @@ import io
 import math
 import struct
 import wave
+from contextlib import redirect_stdout, redirect_stderr
+from pathlib import Path
 from unittest.mock import Mock, patch
 from PIL import Image
 from fixtures import agent, JobTestCase, script
@@ -93,6 +95,81 @@ class ProductionTests(JobTestCase):
         self.assertEqual((self.folder / 'video.mp4').read_bytes(), before)
         self.assertTrue(list((self.folder / 'assets').glob('voice-*.wav')))
         self.assertFalse(list(self.folder.glob('.render-*')))
+
+    def test_fifth_image_failure_keeps_assets_and_explicit_retry_only_requests_missing_ones(self):
+        import httpx
+        from openai import BadRequestError
+        item = script()
+        item['scenes'] = [dict(item['scenes'][0], heading=f'Escena {i}',
+                               narration=f'Contenido educativo diferente para la escena {i}.') for i in range(6)]
+        agent.save(self.folder / 'script.json', item)
+        self.mark_approved()
+        original_video = (self.folder / 'video.mp4').read_bytes()
+        images = self.api.with_options.return_value.images.generate
+        result = images.return_value
+        error = BadRequestError('private-provider-text', response=httpx.Response(
+            400, request=httpx.Request('POST', 'https://api.openai.com/v1/images/generations')),
+            body={'code': 'moderation_blocked', 'type': 'image_generation_user_error'})
+
+        def image_response(**kwargs):
+            if images.call_count == 5:
+                raise error
+            return result
+
+        images.side_effect = image_response
+        output = io.StringIO()
+        # Se prueban persistencia y recuperación; FFmpeg ya tiene una prueba real independiente.
+        with patch.object(agent, 'client', return_value=self.api), \
+                patch.object(production, 'settings', return_value=self.opts), \
+                patch.object(agent, 'ffmpeg_executable', return_value='ffmpeg'), \
+                patch.object(production.subprocess, 'run', return_value=Mock(stdout='')), \
+                patch.object(agent, 'run', side_effect=lambda *args: Path(args[-1]).write_bytes(b'mp4')), \
+                patch.object(agent, 'inspect_video', return_value=58 / production.FPS), \
+                redirect_stdout(output), redirect_stderr(output):
+            with self.assertRaises(BadRequestError):
+                agent.generate(self.folder, use_script=True)
+            self.assertEqual(images.call_count, 5)  # Ningún reintento automático del rechazo.
+            details = self.state()['last_error']
+            self.assertEqual((details['stage'], details['scene'], details['scene_count']), ('image', 5, 6))
+            self.assertEqual(details['reason'], 'content_rejected')
+            self.assertNotIn('approved_hash', self.state())
+            self.assertEqual((self.folder / 'video.mp4').read_bytes(), original_video)
+            self.assertEqual(len(list((self.folder / 'assets').glob('voice-*.wav'))), 6)
+            self.assertEqual(len(list((self.folder / 'assets').glob('image-*.png'))), 4)
+            self.assertFalse(list(self.folder.glob('.render-*')))
+            # Simula que el problema externo se resolvió y el usuario decide reintentar.
+            agent.generate(self.folder, use_script=True)
+        self.assertEqual(images.call_count, 7)  # Solo escenas 5 y 6 en el segundo intento.
+        self.assertEqual(self.api.audio.speech.with_streaming_response.create.call_count, 6)
+        self.api.with_options.assert_called_with(timeout=300, max_retries=0)
+        self.assertEqual(self.state()['status'], 'REVIEW')
+        self.assertNotIn('last_error', self.state())
+        self.assertNotIn('approved_hash', self.state())
+        self.assertIn('Ilustración · escena 5/6', output.getvalue())
+        self.assertIn('Imagen guardada: reutilizada sin llamada', output.getvalue())
+        self.assertIn('Audio guardado: reutilizado sin llamada', output.getvalue())
+        self.assertNotIn('private-provider-text', output.getvalue())
+
+    def test_voice_failure_records_scene_before_image_requests(self):
+        self.api.audio.speech.with_streaming_response.create.side_effect = RuntimeError('private text')
+        with self.assertRaises(RuntimeError) as caught:
+            production.render(self.folder, script(), self.opts, self.api, agent.ffmpeg_executable(),
+                              agent.run, agent.inspect_video, agent.draw_slide)
+        details = agent.error_details(caught.exception)
+        self.assertEqual((details['stage'], details['scene'], details['scene_count']), ('voice', 1, 3))
+        self.assertNotIn('private text', str(details))
+        self.api.with_options.return_value.images.generate.assert_not_called()
+
+    def test_invalid_image_response_keeps_scene_context_in_saved_job(self):
+        self.api.with_options.return_value.images.generate.return_value.data = []
+        with patch.object(agent, 'client', return_value=self.api), \
+                patch.object(production, 'settings', return_value=self.opts), \
+                self.assertRaises(agent.ScriptError):
+            agent.generate(self.folder, use_script=True)
+        details = self.state()['last_error']
+        self.assertEqual(details['stage'], 'image')
+        self.assertEqual(details['scene'], 1)
+        self.assertIn('No se recibió una imagen', details['message'])
 
     def test_real_ffmpeg_preview_and_exact_duration_assembly_without_apis(self):
         before_video = (self.folder / 'video.mp4').read_bytes()

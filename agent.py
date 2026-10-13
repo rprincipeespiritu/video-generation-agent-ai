@@ -48,6 +48,38 @@ def invalidate_approval(state):
     state.pop('approved_at', None)
 
 
+def provider_diagnostics(error):
+    """Guardar solo códigos conocidos e identificadores, nunca texto libre del proveedor."""
+    body = getattr(error, 'body', None)
+    body = body if isinstance(body, dict) else {}
+    if isinstance(body.get('error'), dict):
+        body = body['error']
+    allowed = {
+        'code': ('moderation_blocked', 'content_policy_violation', 'billing_hard_limit_reached',
+                 'credit_balance_exhausted', 'organization_spend_limit_exceeded',
+                 'project_spend_limit_exceeded', 'organization_usage_limit_exceeded',
+                 'insufficient_quota', 'rate_limit_exceeded', 'slow_down', 'model_not_found',
+                 'invalid_value', 'invalid_parameter', 'missing_required_parameter',
+                 'unsupported_parameter', 'server_error', 'server_is_overloaded'),
+        'type': ('image_generation_user_error', 'invalid_request_error', 'insufficient_quota',
+                 'rate_limit_error', 'server_error', 'service_unavailable_error',
+                 'authentication_error', 'permission_error'),
+        'param': ('model', 'prompt', 'size', 'quality', 'n', 'output_format', 'response_format',
+                  'background', 'moderation', 'output_compression', 'voice', 'input',
+                  'instructions', 'speed', 'text.format', 'service_tier'),
+    }
+    result = {}
+    for field, choices in allowed.items():
+        value = getattr(error, field, None) or body.get(field)
+        if isinstance(value, str) and value in choices:
+            result['provider_type' if field == 'type' else field] = value
+    request_id = getattr(error, 'request_id', None)
+    if isinstance(request_id, str) and re.fullmatch(
+            r'(?:req_[a-fA-F0-9]{16,64}|[a-fA-F0-9]{8}(?:-[a-fA-F0-9]{4}){3}-[a-fA-F0-9]{12})', request_id):
+        result['request_id'] = request_id
+    return result, body
+
+
 def error_details(error):
     """Traducir errores conocidos sin persistir mensajes ni cuerpos del proveedor."""
     details = {'type': type(error).__name__}
@@ -56,20 +88,65 @@ def error_details(error):
     status = getattr(error, 'status_code', None)
     if isinstance(status, int) and 400 <= status <= 599:
         details['http_status'] = status
-    body = getattr(error, 'body', None)
-    message = str(body.get('message', '')).lower() if isinstance(body, dict) else ''
-    if status == 400 and 'input messages' in message and 'json' in message and 'json_object' in message:
+    diagnostics, body = provider_diagnostics(error)
+    details.update(diagnostics)
+    code = diagnostics.get('code')
+    message = str(body.get('message', '')).lower()
+    if code in ('moderation_blocked', 'content_policy_violation'):
+        details.update(reason='content_rejected', message=(
+            'OpenAI rechazó el contenido de esta solicitud por sus controles de seguridad. '
+            'Revisa la escena indicada y adecua su contenido antes de volver a intentarlo.'))
+    elif code == 'credit_balance_exhausted':
+        details.update(reason='credits_exhausted', message=(
+            'OpenAI informa que se agotaron los créditos de la organización. '
+            'Revisa Facturación en OpenAI antes de reintentar; el gasto del proyecto no es el saldo disponible.'))
+    elif (code in ('billing_hard_limit_reached', 'organization_spend_limit_exceeded',
+                   'project_spend_limit_exceeded', 'organization_usage_limit_exceeded', 'insufficient_quota')
+          or (code is None and diagnostics.get('provider_type') == 'insufficient_quota')):
+        details.update(reason='billing_or_quota', message=(
+            'OpenAI informa un límite de facturación o cuota. Revisa los créditos y el límite '
+            'correspondiente al código del diagnóstico antes de reintentar. '
+            'La alerta de gasto del proyecto no confirma el saldo disponible.'))
+    elif code in ('rate_limit_exceeded', 'slow_down'):
+        details.update(reason='rate_limit', message=(
+            'OpenAI limitó la frecuencia de solicitudes. Espera antes de reintentar este trabajo.'))
+    elif code == 'model_not_found':
+        details.update(reason='model_unavailable', message=(
+            'El modelo solicitado no está disponible para esta clave. Revisa el modelo y su acceso en OpenAI.'))
+    elif code in ('invalid_value', 'invalid_parameter', 'missing_required_parameter', 'unsupported_parameter'):
+        details.update(reason='invalid_parameter', message=(
+            'OpenAI rechazó un parámetro de la solicitud. Revisa el parámetro indicado en el diagnóstico '
+            'y su compatibilidad con el modelo configurado.'))
+    elif status == 400 and 'input messages' in message and 'json' in message and 'json_object' in message:
         details.update(reason='json_input_required', message=(
             'La solicitud del guion debe pedir JSON explícitamente en el mensaje de entrada. '
             'Actualiza el programa y reintenta este trabajo; la investigación está conservada.'))
     elif type(error).__name__ == 'BadRequestError':
-        details['message'] = 'OpenAI rechazó los parámetros de la solicitud. Revisa el modelo y el formato configurados.'
+        details.update(reason='request_rejected', message=(
+            'OpenAI rechazó la solicitud (HTTP 400). El detalle disponible no permite confirmar la causa. '
+            'Conserva el diagnóstico y el ID de solicitud para revisarlo antes de reintentar.'))
     elif type(error).__name__ == 'AuthenticationError':
         details['message'] = 'OpenAI no aceptó la clave. Revisa la clave guardada en Configuración.'
     elif type(error).__name__ == 'RateLimitError':
-        details['message'] = 'OpenAI aplicó un límite. Revisa el saldo y los límites de uso antes de reintentar.'
+        details['message'] = 'OpenAI aplicó un límite (HTTP 429). Revisa el diagnóstico antes de reintentar.'
     elif type(error).__name__ in ('APIConnectionError', 'APITimeoutError'):
         details['message'] = 'No se pudo completar la conexión con OpenAI. Revisa internet y reintenta el trabajo.'
+    elif type(error).__name__ == 'InternalServerError':
+        details['message'] = 'OpenAI no pudo completar la solicitud por un fallo del servicio. Reintenta más tarde.'
+    context = getattr(error, 'production_context', None)
+    stages = {'voice': 'Voz', 'image': 'Ilustración'}
+    if isinstance(context, dict) and isinstance(context.get('stage'), str) and context['stage'] in stages:
+        scene, total = context.get('scene'), context.get('scene_count')
+        if type(scene) is int and type(total) is int and 1 <= scene <= total <= 100:
+            details.update(stage=context['stage'], scene=scene, scene_count=total,
+                           context=f"{stages[context['stage']]} · escena {scene}/{total}")
+            details['recovery'] = ('Los recursos terminados se conservan. Reintentar este mismo trabajo reutiliza '
+                                   'los audios e imágenes sin cambios; los recursos faltantes o modificados consumen API.')
+    diagnostic_fields = (('http_status', 'HTTP'), ('code', 'Código'), ('provider_type', 'Tipo'),
+                         ('param', 'Parámetro'), ('request_id', 'Solicitud'))
+    diagnostic = ' · '.join(f'{label}: {details[key]}' for key, label in diagnostic_fields if key in details)
+    if diagnostic:
+        details['diagnostic'] = diagnostic
     return details
 
 
@@ -89,8 +166,9 @@ def operation(folder, phase, success):
         })
         save(folder / 'state.json', state)
         print(f'Trabajo {folder.name}: ERROR en {phase} ({type(e).__name__}).', file=sys.stderr)
-        if state['last_error'].get('message'):
-            print(state['last_error']['message'], file=sys.stderr)
+        for field in ('context', 'message', 'diagnostic', 'recovery'):
+            if state['last_error'].get(field):
+                print(state['last_error'][field], file=sys.stderr)
         raise
     else:
         state.update(status=success, updated_at=now())
@@ -598,7 +676,10 @@ def render(folder, demo=False):
         return production.render(folder, script, production.settings(), api, ffmpeg_executable(),
                                  run, inspect_video, draw_slide, target=target)
     except ValueError as error:
-        raise ScriptError(str(error)) from error
+        local_error = ScriptError(str(error))
+        if hasattr(error, 'production_context'):
+            local_error.production_context = error.production_context
+        raise local_error from error
 
 
 def preview(folder):

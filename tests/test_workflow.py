@@ -32,8 +32,68 @@ class WorkflowTests(JobTestCase):
                                 body={'message': 'private-provider-text'})
         details = agent.error_details(error)
         self.assertEqual(details['http_status'], 400)
-        self.assertIn('parámetros', details['message'])
+        self.assertIn('no permite confirmar la causa', details['message'])
         self.assertNotIn('private-provider-text', str(details))
+
+    def test_provider_codes_distinguish_content_billing_and_rate_limits(self):
+        import httpx
+        from openai import BadRequestError, RateLimitError
+        cases = [
+            (400, 'moderation_blocked', 'content_rejected'),
+            (400, 'content_policy_violation', 'content_rejected'),
+            (400, 'billing_hard_limit_reached', 'billing_or_quota'),
+            (429, 'credit_balance_exhausted', 'credits_exhausted'),
+            (429, 'project_spend_limit_exceeded', 'billing_or_quota'),
+            (429, 'organization_spend_limit_exceeded', 'billing_or_quota'),
+            (429, 'organization_usage_limit_exceeded', 'billing_or_quota'),
+            (429, 'insufficient_quota', 'billing_or_quota'),
+            (429, 'rate_limit_exceeded', 'rate_limit'),
+            (429, 'slow_down', 'rate_limit'),
+        ]
+        request_id = 'req_' + '0123456789abcdef' * 2
+        for status, code, reason in cases:
+            with self.subTest(code=code):
+                response = httpx.Response(status, headers={'x-request-id': request_id},
+                                          request=httpx.Request('POST', 'https://api.openai.com/v1/images/generations'))
+                error_class = BadRequestError if status == 400 else RateLimitError
+                error = error_class('private-provider-text', response=response,
+                                    body={'code': code, 'message': 'private-provider-text sk-private-test'})
+                with patch.object(agent, 'render', side_effect=error), self.assertRaises(error_class):
+                    agent.generate(self.folder, use_script=True)
+                details = self.state()['last_error']
+                self.assertEqual(details['reason'], reason)
+                self.assertEqual(details['code'], code)
+                self.assertEqual(details['request_id'], request_id)
+                self.assertIn(request_id, details['diagnostic'])
+                self.assertNotIn('private-provider-text', str(details))
+                self.assertNotIn('sk-private-test', str(details))
+
+    def test_nested_provider_body_and_parameter_diagnostics(self):
+        import httpx
+        from openai import BadRequestError
+        error = BadRequestError('private input', response=httpx.Response(
+            400, request=httpx.Request('POST', 'https://api.openai.com/v1/images/generations')),
+            body={'error': {'code': 'invalid_value', 'param': 'size', 'type': 'invalid_request_error'}})
+        details = agent.error_details(error)
+        self.assertEqual(details['reason'], 'invalid_parameter')
+        self.assertEqual(details['param'], 'size')
+        self.assertEqual(details['provider_type'], 'invalid_request_error')
+        self.assertIn('Parámetro: size', details['diagnostic'])
+
+    def test_untrusted_diagnostic_fields_do_not_leak_or_break_error_handling(self):
+        import httpx
+        from openai import BadRequestError
+        for value in ('sk-private-test', ['private-provider-text'], {'private': 'provider-text'}):
+            with self.subTest(value=value):
+                error = BadRequestError('private-provider-text', response=httpx.Response(
+                    400, headers={'x-request-id': 'sk-private-test'},
+                    request=httpx.Request('POST', 'https://api.openai.com/v1/images/generations')),
+                    body={'code': value, 'type': value, 'param': value, 'message': value})
+                error.production_context = {'stage': value, 'scene': 5, 'scene_count': 15}
+                details = agent.error_details(error)
+                for key in ('code', 'param', 'provider_type', 'request_id', 'context'):
+                    self.assertNotIn(key, details)
+                self.assertNotIn('private', str(details))
 
     def test_generation_failure_invalidates_approval_and_can_retry(self):
         self.mark_approved()

@@ -1,5 +1,6 @@
 """Voz WAV e ilustraciones por escena, con caché local y un solo montaje de audio."""
 import base64
+from contextlib import contextmanager
 import hashlib
 import json
 import math
@@ -61,6 +62,16 @@ def cache_paths(folder, kind, request, extension):
     return path, meta, valid
 
 
+@contextmanager
+def scene_operation(stage, index, total):
+    """Añadir contexto local sin sustituir el error original del proveedor."""
+    try:
+        yield
+    except (Exception, KeyboardInterrupt) as error:
+        error.production_context = {'stage': stage, 'scene': index + 1, 'scene_count': total}
+        raise
+
+
 def wav_data(path):
     if path.stat().st_size > 40 * 1024 * 1024:
         raise ValueError('El audio de una escena excede el tamaño esperado.')
@@ -77,6 +88,8 @@ def speech_asset(folder, scene, opts, api):
     request = {'model': opts['tts_model'], 'voice': opts['voice'], 'input': scene['narration'],
                'instructions': SPEECH_STYLE, 'response_format': 'wav', 'speed': 1.0}
     path, meta, cached = cache_paths(folder, 'voice', request, 'wav')
+    print('  Audio guardado: reutilizado sin llamada a OpenAI.' if cached
+          else '  Solicitando audio a OpenAI.', flush=True)
     if not cached:
         pending = path.with_suffix('.pending.wav')
         with api.audio.speech.with_streaming_response.create(**request) as response:
@@ -112,6 +125,8 @@ def image_asset(folder, script, scene, opts, api):
     request = {'model': opts['image_model'], 'prompt': image_prompt(script, scene),
                'size': '1536x864', 'quality': opts['image_quality'], 'n': 1, 'output_format': 'png'}
     path, meta, cached = cache_paths(folder, 'image', request, 'png')
+    print('  Imagen guardada: reutilizada sin llamada a OpenAI.' if cached
+          else '  Solicitando imagen a OpenAI.', flush=True)
     if not cached:
         # No repetir automáticamente una solicitud de imagen costosa ante un timeout.
         response = api.with_options(timeout=300, max_retries=0).images.generate(**request)
@@ -178,7 +193,8 @@ def render(folder, script, opts, api, ffmpeg, run, inspect_video, make_slide, *,
     audio_paths, seconds = [], []
     for i, scene in enumerate(scenes):
         print(f'Voz natural {i + 1}/{len(scenes)}: {opts["voice"]}.', flush=True)
-        path, length = speech_asset(folder, scene, opts, api)
+        with scene_operation('voice', i, len(scenes)):
+            path, length = speech_asset(folder, scene, opts, api)
         audio_paths.append(path)
         seconds.append(length)
     frames, ratio = scene_frames(seconds, target)
@@ -190,7 +206,8 @@ def render(folder, script, opts, api, ffmpeg, run, inspect_video, make_slide, *,
             poster = work / f'scene-{i:02d}.png'
             if opts['visual_mode'] == 'images':
                 print(f'Ilustración {i + 1}/{len(scenes)}: preparando imagen de la escena.', flush=True)
-                asset = image_asset(folder, script, scene, opts, api)
+                with scene_operation('image', i, len(scenes)):
+                    asset = image_asset(folder, script, scene, opts, api)
                 with Image.open(asset) as source:
                     canvas = ImageOps.fit(source.convert('RGB'), (1280, 720), method=Image.Resampling.LANCZOS)
                 canvas.save(poster)

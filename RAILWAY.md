@@ -54,6 +54,21 @@ Puedes cerrar la pestaña: el proceso continúa en el servidor. El inicio de ses
 
 No despliegues cambios ni reinicies mientras se genera o sube un video. Un reinicio interrumpe esa operación; la actividad queda marcada para revisión y no se repite automáticamente. Los bloqueos y los estados inciertos se conservan. Verifica si sigue habiendo procesos antes de recuperar un trabajo; nunca fuerces una nueva subida si quedó en `UPLOADING` sin comprobar antes YouTube Studio.
 
+### Si falla una ilustración o la voz
+
+Abre el trabajo que quedó en **Necesita atención**. El panel y la actividad muestran la etapa y el número de escena; **Datos para soporte** incluye HTTP, códigos conocidos del proveedor, parámetro e ID de solicitud cuando estén disponibles. No se guarda el cuerpo ni el mensaje libre de OpenAI porque podrían incluir texto privado o credenciales. Los errores anteriores a esta mejora no permiten recuperar retroactivamente el código descartado.
+
+- `moderation_blocked` / `content_policy_violation`: revisa el contenido de la escena y su adecuación a las políticas del proveedor antes de volver a solicitarla.
+- `credit_balance_exhausted`: revisa los créditos de la organización en OpenAI. El gasto acumulado del proyecto no es el saldo disponible.
+- `billing_hard_limit_reached`, `insufficient_quota` o códigos de límite de organización/proyecto: revisa Facturación y el límite correspondiente. Una alerta de gasto no prueba que los créditos estén agotados.
+- `invalid_value` / `unsupported_parameter`: revisa el parámetro indicado y su compatibilidad con el modelo.
+- `rate_limit_exceeded` / `slow_down`: espera antes de realizar otro intento.
+- `BadRequestError` sin código reconocido: la causa no está confirmada; conserva el ID de solicitud para consultar al proveedor. No asumas que cambiar el presupuesto lo resolverá.
+
+Cuando hayas revisado la causa, pulsa **Reintentar trabajo** sobre el mismo ID. Los audios e imágenes completos y válidos permanecen en `assets/` y se reutilizan si el guion, la voz y los parámetros correspondientes no cambiaron. La actividad distingue recursos reutilizados de nuevas solicitudes. Las escenas pendientes o modificadas consumen API; no se reintentan imágenes automáticamente ni se sustituye su contenido tras un rechazo. El montaje local de las escenas se vuelve a ejecutar. No crees un trabajo nuevo ni borres los recursos para recuperar el anterior. Al completarse, el video vuelve a **Por revisar** y requiere tu aprobación.
+
+Referencias: [errores de generación de imágenes](https://developers.openai.com/api/docs/guides/image-generation#handling-blocked-requests-and-other-errors), [códigos de error de OpenAI](https://developers.openai.com/api/docs/guides/error-codes), [alertas de gasto](https://developers.openai.com/api/docs/guides/terraform/rate-limits-and-spend).
+
 ## 4. Investigación diaria: trasladar el horario
 
 El programador interno consulta la hora de **America/Lima** y, a partir de las **06:00**, ejecuta exclusivamente `agent.py diario` una vez por fecha. Si a esa hora está ocupado, espera a que termine. Si el servicio arranca más tarde, investiga el día actual; no recupera días anteriores.
